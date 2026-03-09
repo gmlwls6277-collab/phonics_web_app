@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="theme-color" content="#FBF7F0"/>
+  <title>파닉스 학습 앱 🦊</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#FBF7F0; overflow:hidden; }
+    #root { height:100%; display:flex; justify-content:center; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+
+
+/* ══════════════════════════════════════════════════════
+   CURRICULUM DATA
+══════════════════════════════════════════════════════ */
+const CURRICULUM = {
+  month1: { label:"알파벳 소리", color:"#FF8FA3", bg:"#FFF0F3", icon:"🔤", type:"letter",
+    weeks: { week1:["A","B","C"], week2:["D","E","F"], week3:["G","H","I"], week4:["J","K","L"] } },
+  month2: { label:"CVC 단어", color:"#5BC4BF", bg:"#EDFAF9", icon:"📝", type:"word",
+    weeks: { week5:["cat","bat","hat"], week6:["dog","log","frog"], week7:["sun","run","fun"], week8:["box","fox","mix"] } },
+  month3: { label:"문장", color:"#A78BFA", bg:"#F3EEFF", icon:"📖", type:"sentence",
+    weeks: { week9:["I am Sam"], week10:["The cat is big"], week11:["A dog is on a box"], week12:["Review"] } },
+};
+
+const PHONICS = { A:"/æ/",B:"/b/",C:"/k/",D:"/d/",E:"/ɛ/",F:"/f/",G:"/g/",H:"/h/",I:"/ɪ/",J:"/dʒ/",K:"/k/",L:"/l/" };
+const EMOJI   = {
+  A:"🍎",B:"🐝",C:"🐱",D:"🐶",E:"🥚",F:"🐸",G:"🍇",H:"🎩",I:"🍦",J:"🃏",K:"🪁",L:"🦁",
+  cat:"🐱",bat:"🦇",hat:"🎩",dog:"🐶",log:"🪵",frog:"🐸",sun:"☀️",run:"🏃",fun:"🎉",box:"📦",fox:"🦊",mix:"🥣",
+  "I am Sam":"👦","The cat is big":"🐱","A dog is on a box":"🐶",Review:"🔄",
+};
+const STICKERS = ["⭐","🌟","💫","✨","🎀","🎁","🍭","🍬","🌈","🦄","🐣","🌸","🎠","🎡","🏆","💎","🎸","🚀","🦋","🌺"];
+
+const WEEKS = Object.entries(CURRICULUM).flatMap(([mKey,month]) =>
+  Object.entries(month.weeks).map(([wKey,items]) => ({
+    monthKey:mKey, weekKey:wKey, weekNum:parseInt(wKey.replace("week","")),
+    items, label:month.label, color:month.color, bg:month.bg, type:month.type
+  }))
+);
+const CUR_WEEK = 4;
+
+function buildFlow(wk) {
+  const {items,type,color,bg} = wk;
+  const flow = [];
+  if (type==="letter") {
+    items.forEach((letter,i) => {
+      flow.push({id:`sound_${i}`,kind:"card",label:"파닉스 카드",letter,phonics:PHONICS[letter]||"",word:letter.toLowerCase()+" 소리",emoji:EMOJI[letter]||"🔤",color,bg});
+      flow.push({id:`speak_${i}`,kind:"speak",label:"따라 말하기",letter,phonics:PHONICS[letter]||"",word:letter.toLowerCase()+" 소리",emoji:EMOJI[letter]||"🔤",color,bg});
+    });
+  } else if (type==="word") {
+    items.forEach((word,i) => {
+      flow.push({id:`word_${i}`,kind:"card",label:"단어 카드",letter:EMOJI[word]||"📝",phonics:"",word,emoji:EMOJI[word]||"📝",color,bg});
+      flow.push({id:`speak_${i}`,kind:"speak",label:"따라 말하기",letter:EMOJI[word]||"📝",phonics:"",word,emoji:EMOJI[word]||"📝",color,bg});
+    });
+    const shuffled = [...items].sort(()=>Math.random()-.5);
+    const choices  = shuffled.includes(items[0]) ? shuffled.slice(0,4) : [items[0],...shuffled.slice(0,3)].sort(()=>Math.random()-.5);
+    flow.push({id:"game",kind:"game",label:"미니 게임",answer:items[0],choices,quizEmoji:EMOJI[items[0]]||"📝",color,bg});
+  } else {
+    items.forEach((sent,i) => {
+      flow.push({id:`sent_${i}`,kind:"card",label:"문장 읽기",letter:EMOJI[sent]||"📖",phonics:"",word:sent,emoji:EMOJI[sent]||"📖",color,bg});
+      if (sent!=="Review") flow.push({id:`speak_${i}`,kind:"speak",label:"따라 말하기",letter:EMOJI[sent]||"📖",phonics:"",word:sent,emoji:EMOJI[sent]||"📖",color,bg});
+    });
+  }
+  flow.push({id:"reward",kind:"reward",label:"완료"});
+  return flow;
+}
+
+/* ══════════════════════════════════════════════════════
+   APP
+══════════════════════════════════════════════════════ */
+function App() {
+  const wk   = WEEKS[CUR_WEEK];
+  const FLOW = buildFlow(wk);
+
+  const [screen,         setScreen]        = useState("home");
+  const [stepIdx,        setStepIdx]       = useState(0);
+  const [completedWeeks, setCompletedWeeks]= useState([0,1,2,3]);
+  const [stickers,       setStickers]      = useState([0,2,5,8,11,14]);
+  const [learnedItems,   setLearnedItems]  = useState(["A","B","C","D","E","F","cat","bat","hat"]);
+  const [soundActive,    setSoundActive]   = useState(false);
+  const [isSpeaking,     setIsSpeaking]    = useState(false);
+  const [micState,       setMicState]      = useState("idle");
+  const [quizAnswer,     setQuizAnswer]    = useState(null);
+  const [shakeWord,      setShakeWord]     = useState(null);
+
+  const totalSteps = FLOW.filter(f=>f.id!=="reward").length;
+  const cur        = screen==="lesson" ? FLOW[stepIdx] : null;
+  const progPct    = screen==="lesson" ? Math.round((stepIdx/totalSteps)*100) : 0;
+  const isReward   = screen==="lesson" && FLOW[stepIdx]?.id==="reward";
+
+  function startLesson()  { setStepIdx(0); setScreen("lesson"); resetStep(); }
+  function nextStep()     { const ni=stepIdx+1; if(ni>=FLOW.length) return; setStepIdx(ni); resetStep(); }
+  function resetStep()    { setSoundActive(false); setMicState("idle"); setQuizAnswer(null); setShakeWord(null); }
+  function finishLesson() {
+    setStickers(s=>s.length<20?[...s,s.length]:s);
+    setLearnedItems(s=>[...new Set([...s,...wk.items])]);
+    setCompletedWeeks(s=>[...new Set([...s,CUR_WEEK])]);
+    setScreen("home");
+  }
+  function canNext() {
+    if(!cur) return false;
+    if(cur.kind==="speak") return micState==="done";
+    if(cur.kind==="game")  return quizAnswer===cur.answer;
+    return true;
+  }
+
+  /* TTS */
+  const [ttsOK] = useState(()=>"speechSynthesis" in window);
+  function speak(text,rate=0.78) {
+    if(!ttsOK) return;
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang="en-US"; u.rate=rate; u.pitch=1.1; u.volume=1;
+    const vs=window.speechSynthesis.getVoices();
+    const v=vs.find(v=>v.lang.startsWith("en")&&/samantha|karen|zira|moira/i.test(v.name))||vs.find(v=>v.lang.startsWith("en"));
+    if(v) u.voice=v;
+    u.onstart=()=>{setIsSpeaking(true);setSoundActive(true);};
+    u.onend  =()=>{setIsSpeaking(false);setSoundActive(false);};
+    u.onerror=()=>{setIsSpeaking(false);setSoundActive(false);};
+    window.speechSynthesis.speak(u);
+  }
+  useEffect(()=>{ if(ttsOK) window.speechSynthesis.onvoiceschanged=()=>window.speechSynthesis.getVoices(); },[]);
+  useEffect(()=>{ if(ttsOK) window.speechSynthesis.cancel(); setIsSpeaking(false); setSoundActive(false); },[stepIdx]);
+  function tapSound(){ speak(cur?.word||""); }
+
+  /* STT */
+  const [sttOK]=useState(()=>"SpeechRecognition" in window||"webkitSpeechRecognition" in window);
+  function tapMic() {
+    if(micState!=="idle") return;
+    setMicState("rec");
+    if(sttOK){
+      const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+      const r=new SR(); r.lang="en-US"; r.interimResults=false;
+      r.onresult=()=>setMicState("done");
+      r.onerror =()=>setMicState("done");
+      r.onend   =()=>setMicState(s=>s==="rec"?"done":s);
+      try{r.start();}catch{setMicState("done");}
+    } else setTimeout(()=>setMicState("done"),2500);
+  }
+  function tapQuiz(w) {
+    if(quizAnswer) return;
+    setQuizAnswer(w);
+    if(w===cur.answer) speak(w,0.75);
+    else { setShakeWord(w); setTimeout(()=>setShakeWord(null),500); }
+  }
+
+  /* ── CSS ── */
+  const css=`
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Baloo+2:wght@700;800;900&display=swap');
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    body{font-family:'Nunito',sans-serif;background:#FBF7F0;overflow:hidden;}
+
+    .shell{width:390px;height:100vh;max-height:844px;margin:0 auto;background:#FBF7F0;display:flex;flex-direction:column;position:relative;overflow:hidden;}
+
+    /* Blobs */
+    .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.16;pointer-events:none;z-index:0;}
+    .b1{width:300px;height:300px;background:#FFB347;top:-100px;right:-80px;}
+    .b2{width:240px;height:240px;background:#74B9FF;bottom:60px;left:-80px;}
+    .b3{width:200px;height:200px;background:#A78BFA;bottom:200px;right:-60px;}
+
+    /* Screen */
+    .scr{flex:1;overflow-y:auto;position:relative;z-index:1;padding-bottom:100px;}
+    .scr::-webkit-scrollbar{display:none;}
+
+    /* Header */
+    .hdr{padding:52px 24px 16px;display:flex;align-items:center;justify-content:space-between;position:relative;z-index:2;}
+    .hdr-greeting{font-family:'Baloo 2',sans-serif;font-size:13px;font-weight:700;color:#C4A882;letter-spacing:.6px;text-transform:uppercase;}
+    .hdr-title{font-family:'Baloo 2',sans-serif;font-size:26px;font-weight:900;color:#3D2C1E;line-height:1.15;}
+    .hdr-avatar{width:52px;height:52px;border-radius:18px;background:linear-gradient(135deg,#FF8FA3,#FFB347);display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 6px 20px rgba(255,143,163,.4);position:relative;}
+    .hdr-badge{position:absolute;top:-5px;right:-5px;width:20px;height:20px;border-radius:50%;background:#FFD93D;border:2.5px solid #FBF7F0;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;color:#3D2C1E;}
+
+    /* Today card */
+    .today-card{margin:0 20px 16px;background:white;border-radius:28px;padding:24px;box-shadow:0 8px 32px rgba(61,44,30,.09);position:relative;overflow:hidden;}
+    .today-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,#FF8FA3,#FFB347,#FFD93D,#6BCB77);}
+    .today-meta{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+    .today-badge{font-size:12px;font-weight:800;color:#FF8FA3;background:#FFF0F3;border-radius:99px;padding:5px 14px;}
+    .today-time{font-size:12px;font-weight:700;color:#C4A882;}
+    .today-time b{color:#3D2C1E;}
+    .today-title{font-family:'Baloo 2',sans-serif;font-size:22px;font-weight:900;color:#3D2C1E;margin-bottom:3px;}
+    .today-sub{font-size:13px;color:#C4A882;font-weight:600;margin-bottom:18px;}
+    .items-list{display:flex;flex-direction:column;gap:10px;margin-bottom:22px;}
+    .item-row{display:flex;align-items:center;gap:14px;background:#FBF7F0;border-radius:18px;padding:16px 18px;}
+    .item-emo{font-size:32px;flex-shrink:0;}
+    .item-main{font-family:'Baloo 2',sans-serif;font-size:24px;font-weight:900;color:#3D2C1E;}
+    .item-ph{font-size:14px;font-weight:700;color:#C4A882;margin-left:auto;}
+    .start-btn{width:100%;padding:18px;border:none;border-radius:18px;font-family:'Baloo 2',sans-serif;font-size:20px;font-weight:900;color:white;background:linear-gradient(135deg,#FF8FA3,#FF5F7A);box-shadow:0 8px 24px rgba(255,95,122,.38);cursor:pointer;transition:all .2s;letter-spacing:.3px;}
+    .start-btn:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(255,95,122,.45);}
+    .start-btn:active{transform:scale(.98);}
+
+    /* Mini roadmap */
+    .mini-rm{margin:0 20px;background:white;border-radius:24px;padding:20px 22px;box-shadow:0 4px 20px rgba(61,44,30,.06);}
+    .mrm-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+    .mrm-title{font-family:'Baloo 2',sans-serif;font-size:16px;font-weight:900;color:#3D2C1E;}
+    .mrm-badge{font-size:12px;font-weight:800;color:#FF8FA3;background:#FFF0F3;border-radius:99px;padding:4px 12px;}
+    .blk-row{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-bottom:10px;}
+    .blk{height:13px;border-radius:3px;}
+    .blk.done{background:linear-gradient(90deg,#6BCB77,#5BC4BF);}
+    .blk.cur{background:linear-gradient(90deg,#FFB347,#FFD93D);}
+    .blk.off{background:#EDE8E0;}
+    .month-dots{display:flex;justify-content:space-between;}
+    .dot-item{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:#C4A882;}
+    .dot-item.active{color:#3D2C1E;}
+    .dot-circ{width:8px;height:8px;border-radius:50%;}
+
+    /* Lesson header */
+    .lhdr{padding:52px 20px 14px;display:flex;align-items:center;gap:14px;position:relative;z-index:2;}
+    .lhdr-back{width:44px;height:44px;border-radius:16px;border:none;background:white;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 12px rgba(61,44,30,.09);flex-shrink:0;}
+    .lhdr-info{flex:1;}
+    .lhdr-label{font-family:'Baloo 2',sans-serif;font-size:18px;font-weight:900;color:#3D2C1E;}
+    .lhdr-count{font-size:12px;font-weight:700;color:#C4A882;margin-bottom:6px;}
+    .lprog-bg{height:8px;background:#EDE8E0;border-radius:99px;}
+    .lprog-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#FF8FA3,#FFB347);transition:width .5s cubic-bezier(.4,0,.2,1);}
+
+    /* Card screen */
+    .card-scr{display:flex;flex-direction:column;align-items:center;padding:8px 24px 0;min-height:calc(100vh - 240px);}
+    .step-tag{font-size:11px;font-weight:800;color:#C4A882;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;}
+    .pcard{width:100%;border-radius:32px;padding:32px 24px 30px;display:flex;flex-direction:column;align-items:center;box-shadow:0 12px 48px rgba(61,44,30,.14);margin-bottom:24px;position:relative;overflow:hidden;}
+    .pcard::after{content:'';position:absolute;bottom:-50px;right:-50px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.12);}
+    .pcard::before{content:'';position:absolute;top:-30px;left:-30px;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,.08);}
+    .pc-emoji{font-size:96px;line-height:1;margin-bottom:10px;user-select:none;filter:drop-shadow(0 6px 12px rgba(0,0,0,.15));}
+    .pc-letter{font-family:'Baloo 2',sans-serif;font-size:108px;font-weight:900;line-height:1;color:white;text-shadow:0 4px 24px rgba(0,0,0,.15);letter-spacing:-3px;}
+    .pc-phonics{font-size:28px;font-weight:700;color:rgba(255,255,255,.75);margin-bottom:8px;}
+    .pc-word{font-family:'Baloo 2',sans-serif;font-size:38px;font-weight:900;color:white;text-shadow:0 2px 12px rgba(0,0,0,.1);}
+    .sound-pill{display:flex;align-items:center;gap:10px;background:white;border:none;border-radius:99px;padding:16px 32px;cursor:pointer;font-family:'Baloo 2',sans-serif;font-size:18px;font-weight:800;box-shadow:0 4px 20px rgba(61,44,30,.1);transition:all .2s;min-width:190px;justify-content:center;}
+    .sound-pill:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(61,44,30,.15);}
+    .sound-pill:active{transform:scale(.97);}
+    .sound-pill.playing{background:#FFF0F3;}
+    .si{font-size:22px;}
+    .next-pill{width:100%;padding:20px;border:none;border-radius:20px;margin-top:20px;font-family:'Baloo 2',sans-serif;font-size:20px;font-weight:900;color:white;background:linear-gradient(135deg,#3D2C1E,#5C4033);box-shadow:0 6px 24px rgba(61,44,30,.2);cursor:pointer;transition:all .2s;letter-spacing:.3px;}
+    .next-pill:hover:not(:disabled){transform:translateY(-2px);}
+    .next-pill:active:not(:disabled){transform:scale(.98);}
+    .next-pill:disabled{opacity:.22;cursor:not-allowed;}
+
+    /* Speak screen */
+    .spk-scr{display:flex;flex-direction:column;align-items:center;padding:8px 24px 0;min-height:calc(100vh - 240px);}
+    .spk-letters{display:flex;gap:16px;margin-bottom:14px;}
+    .spk-l{font-family:'Baloo 2',sans-serif;font-size:72px;font-weight:900;line-height:1;}
+    .spk-word{font-family:'Baloo 2',sans-serif;font-size:46px;font-weight:900;color:#3D2C1E;letter-spacing:-1px;margin-bottom:8px;}
+    .spk-hint{font-size:16px;font-weight:700;color:#C4A882;margin-bottom:24px;}
+    .mic-zone{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:6px;}
+    .mic-btn{width:110px;height:110px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;transition:all .25s;font-size:46px;}
+    .mic-btn.idle{background:white;box-shadow:0 6px 24px rgba(61,44,30,.1),0 0 0 10px rgba(255,143,163,.08);}
+    .mic-btn.idle:hover{box-shadow:0 10px 32px rgba(61,44,30,.13),0 0 0 18px rgba(255,143,163,.12);}
+    .mic-btn.rec{background:linear-gradient(135deg,#FF5F7A,#FF8FA3);color:white;animation:ripple 1s ease-out infinite;}
+    @keyframes ripple{0%{box-shadow:0 0 0 0 rgba(255,95,122,.5);}70%{box-shadow:0 0 0 26px rgba(255,95,122,0);}100%{box-shadow:0 0 0 0 rgba(255,95,122,0);}}
+    .mic-btn.done{background:linear-gradient(135deg,#6BCB77,#5BC4BF);color:white;box-shadow:0 8px 28px rgba(91,196,191,.4);}
+    .mic-lbl{font-size:16px;font-weight:700;color:#C4A882;}
+    .mic-lbl.ok{color:#5BC4BF;}
+
+    /* Game screen */
+    .game-scr{display:flex;flex-direction:column;align-items:center;padding:8px 24px 0;min-height:calc(100vh - 240px);}
+    .game-emo{font-size:120px;line-height:1;margin-bottom:10px;user-select:none;filter:drop-shadow(0 8px 16px rgba(0,0,0,.1));}
+    .game-q{font-size:18px;font-weight:700;color:#C4A882;margin-bottom:24px;}
+    .game-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;}
+    .game-choice{padding:28px 10px;border-radius:22px;border:3px solid #EDE8E0;background:white;font-family:'Baloo 2',sans-serif;font-size:26px;font-weight:800;color:#3D2C1E;cursor:pointer;text-align:center;transition:all .2s;box-shadow:0 2px 12px rgba(61,44,30,.05);}
+    .game-choice:hover:not(.gc):not(.gw){border-color:#A78BFA;color:#A78BFA;transform:translateY(-2px);}
+    .game-choice.gc{background:linear-gradient(135deg,#6BCB77,#5BC4BF);border-color:transparent;color:white;transform:scale(1.05);box-shadow:0 8px 28px rgba(91,196,191,.4);}
+    .game-choice.gw{animation:wrongShake .4s ease;border-color:#FF8FA3;color:#FF8FA3;}
+    @keyframes wrongShake{0%,100%{transform:translateX(0);}25%{transform:translateX(-8px);}75%{transform:translateX(8px);}}
+
+    /* Reward */
+    .rwd-scr{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:calc(100vh - 130px);padding:20px 28px;}
+    .rwd-conf{font-size:22px;display:flex;gap:6px;margin-bottom:20px;animation:fadeUp .5s ease both;}
+    .rwd-sticker{width:130px;height:130px;border-radius:36px;margin-bottom:20px;background:linear-gradient(135deg,#FFD93D,#FFB347);display:flex;align-items:center;justify-content:center;font-size:72px;box-shadow:0 16px 48px rgba(255,179,71,.42);animation:popIn .55s cubic-bezier(.34,1.7,.64,1) both;}
+    @keyframes popIn{from{transform:scale(0) rotate(-15deg);opacity:0;}to{transform:scale(1) rotate(0);opacity:1;}}
+    .rwd-title{font-family:'Baloo 2',sans-serif;font-size:36px;font-weight:900;color:#3D2C1E;margin-bottom:8px;}
+    .rwd-sub{font-size:16px;font-weight:600;color:#C4A882;margin-bottom:20px;}
+    .rwd-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:32px;}
+    .rwd-chip{background:white;border-radius:99px;padding:8px 18px;font-family:'Baloo 2',sans-serif;font-size:16px;font-weight:700;color:#3D2C1E;box-shadow:0 2px 12px rgba(61,44,30,.08);}
+    .rwd-btn{width:100%;padding:20px;border:none;border-radius:20px;font-family:'Baloo 2',sans-serif;font-size:20px;font-weight:900;color:white;background:linear-gradient(135deg,#FF8FA3,#FF5F7A);box-shadow:0 8px 28px rgba(255,95,122,.38);cursor:pointer;transition:all .2s;}
+    .rwd-btn:hover{transform:translateY(-2px);}
+
+    /* Roadmap */
+    .rm-scr{padding:0 20px;}
+    .month-block{background:white;border-radius:24px;margin-bottom:14px;overflow:hidden;box-shadow:0 4px 20px rgba(61,44,30,.06);}
+    .mb-top{display:flex;align-items:center;gap:14px;padding:20px;}
+    .mb-icon{width:52px;height:52px;border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:26px;flex-shrink:0;}
+    .mb-name{font-size:12px;font-weight:700;color:#C4A882;}
+    .mb-title{font-family:'Baloo 2',sans-serif;font-size:18px;font-weight:900;color:#3D2C1E;}
+    .mb-tag{margin-left:auto;padding:6px 14px;border-radius:99px;font-size:12px;font-weight:800;white-space:nowrap;}
+    .t-done{background:#EDFFF9;color:#5BC4BF;}
+    .t-cur{background:#FFF0F3;color:#FF8FA3;}
+    .t-next{background:#F5F2EE;color:#C4A882;}
+    .mb-weeks{border-top:1.5px solid #FAF7F4;}
+    .wk-row{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #FAF7F4;}
+    .wk-row:last-child{border-bottom:none;}
+    .wdot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+    .wk-num{font-size:11px;font-weight:700;color:#C4A882;}
+    .wk-words{font-family:'Baloo 2',sans-serif;font-size:15px;font-weight:700;color:#3D2C1E;}
+    .wk-cur .wk-words{color:#FF8FA3;}
+    .wk-badge{margin-left:auto;font-size:11px;font-weight:800;background:#FFF0F3;color:#FF8FA3;padding:4px 10px;border-radius:99px;}
+
+    /* Progress */
+    .pg-scr{padding:0 20px;}
+    .stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;}
+    .stat-box{background:white;border-radius:20px;padding:18px 10px;text-align:center;box-shadow:0 4px 16px rgba(61,44,30,.06);}
+    .stat-n{font-family:'Baloo 2',sans-serif;font-size:36px;font-weight:900;color:#3D2C1E;line-height:1;}
+    .stat-l{font-size:11px;font-weight:700;color:#C4A882;margin-top:4px;}
+    .sec-head{font-family:'Baloo 2',sans-serif;font-size:17px;font-weight:900;color:#3D2C1E;margin-bottom:12px;}
+    .album{background:white;border-radius:24px;padding:18px;margin-bottom:18px;box-shadow:0 4px 16px rgba(61,44,30,.06);}
+    .album-sub{font-size:12px;color:#C4A882;font-weight:600;margin-bottom:12px;}
+    .stk-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+    .stk-slot{aspect-ratio:1;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;}
+    .stk-on{background:linear-gradient(135deg,#FFD93D,#FFB347);box-shadow:0 4px 12px rgba(255,179,71,.3);}
+    .stk-off{background:#F5F2EE;border:2px dashed #E0D9CF;}
+    .learned-box{background:white;border-radius:24px;padding:18px;box-shadow:0 4px 16px rgba(61,44,30,.06);}
+    .learned-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+    .lchip{background:#FBF7F0;border:1.5px solid #EDE8E0;border-radius:99px;padding:8px 16px;font-family:'Baloo 2',sans-serif;font-size:15px;font-weight:700;color:#3D2C1E;}
+
+    /* Nav */
+    .nav{position:absolute;bottom:0;left:0;right:0;background:white;border-radius:28px 28px 0 0;padding:10px 16px 28px;display:flex;gap:4px;box-shadow:0 -4px 32px rgba(61,44,30,.08);z-index:10;}
+    .nbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px;border:none;background:none;cursor:pointer;border-radius:16px;transition:all .2s;}
+    .nbtn.on{background:#3D2C1E;}
+    .nicon{font-size:24px;line-height:1;}
+    .nlabel{font-size:10px;font-weight:800;color:#C4A882;letter-spacing:.3px;}
+    .nbtn.on .nlabel{color:white;}
+
+    @keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+    .fu{animation:fadeUp .3s cubic-bezier(.4,0,.2,1) both;}
+  `;
+
+  /* ── HOME ── */
+  const Home = () => (
+    <div className="scr fu">
+      <div className="hdr">
+        <div>
+          <div className="hdr-greeting">Good Morning 🌞</div>
+          <div className="hdr-title">오늘도 같이<br/>배워봐요!</div>
+        </div>
+        <div className="hdr-avatar">
+          🦊<div className="hdr-badge">{stickers.length}</div>
+        </div>
+      </div>
+
+      <div className="today-card">
+        <div className="today-meta">
+          <span className="today-badge">{wk.weekKey.replace("week","Week ")} · {wk.label}</span>
+          <span className="today-time">⏱ <b>10분</b></span>
+        </div>
+        <div className="today-title">오늘의 파닉스 📖</div>
+        <div className="today-sub">오늘 배울 {wk.type==="letter"?"소리":wk.type==="word"?"단어":"문장"}</div>
+        <div className="items-list">
+          {wk.items.map((item,i)=>(
+            <div key={i} className="item-row">
+              <span className="item-emo">{EMOJI[item]||"📖"}</span>
+              <span className="item-main" style={{color:wk.color}}>{item}</span>
+              {PHONICS[item]&&<span className="item-ph">{PHONICS[item]}</span>}
+            </div>
+          ))}
+        </div>
+        <button className="start-btn" onClick={startLesson}>🚀 오늘 학습 시작</button>
+      </div>
+
+      <div className="mini-rm">
+        <div className="mrm-hdr">
+          <span className="mrm-title">3개월 로드맵</span>
+          <span className="mrm-badge">Week {wk.weekNum} / 12</span>
+        </div>
+        <div className="blk-row">
+          {WEEKS.map((_,i)=>(
+            <div key={i} className={`blk ${completedWeeks.includes(i)?"done":i===CUR_WEEK?"cur":"off"}`}/>
+          ))}
+        </div>
+        <div className="month-dots">
+          {Object.entries(CURRICULUM).map(([key,m],i)=>(
+            <div key={i} className={`dot-item ${key===wk.monthKey?"active":""}`}>
+              <div className="dot-circ" style={{background:m.color}}/>Month {i+1}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ── LESSON HEADER ── */
+  const LessonHeader = ({s}) => (
+    <div className="lhdr">
+      <button className="lhdr-back" onClick={()=>setScreen("home")}>✕</button>
+      <div className="lhdr-info">
+        <div className="lhdr-label">{s?.label||""}</div>
+        <div className="lhdr-count">{isReward?"완료 🎉":`${stepIdx+1} / ${totalSteps}`}</div>
+        <div className="lprog-bg"><div className="lprog-fill" style={{width:`${isReward?100:progPct}%`}}/></div>
+      </div>
+    </div>
+  );
+
+  /* ── PHONICS CARD ── */
+  const CardScreen = ({s}) => {
+    const isLetter = /^[A-Z]$/.test(s.letter);
+    return (
+      <div className="scr">
+        <LessonHeader s={s}/>
+        <div className="card-scr fu">
+          <div className="step-tag">📚 {s.label}</div>
+          <div className="pcard" style={{background:`linear-gradient(145deg,${s.color},${s.color}BB)`}}>
+            {isLetter
+              ? <>
+                  <div className="pc-emoji">{s.emoji}</div>
+                  <div className="pc-letter">{s.letter}</div>
+                  {s.phonics&&<div className="pc-phonics">{s.phonics}</div>}
+                  <div className="pc-word">{s.word}</div>
+                </>
+              : <>
+                  <div style={{fontSize:90,lineHeight:1,marginBottom:14,filter:"drop-shadow(0 6px 12px rgba(0,0,0,.12))"}}>{s.emoji}</div>
+                  <div style={{fontFamily:"'Baloo 2',sans-serif",fontSize:s.word.length>12?28:42,fontWeight:900,color:"white",textShadow:"0 2px 12px rgba(0,0,0,.15)",textAlign:"center",lineHeight:1.2}}>{s.word}</div>
+                </>
+            }
+          </div>
+          <button className={`sound-pill ${soundActive?"playing":""}`} onClick={tapSound}>
+            <span className="si">{isSpeaking?"🔉":"🔊"}</span>
+            <span style={{color:soundActive?s.color:"#3D2C1E"}}>{isSpeaking?"재생 중...":"소리 듣기"}</span>
+          </button>
+          <button className="next-pill" onClick={nextStep}>다음 →</button>
+        </div>
+      </div>
+    );
+  };
+
+  /* ── SPEAK ── */
+  const SpeakScreen = ({s}) => {
+    const isLetter = /^[A-Z]$/.test(s.letter);
+    const ch = isLetter ? s.letter.toLowerCase() : "";
+    return (
+      <div className="scr">
+        <LessonHeader s={s}/>
+        <div className="spk-scr fu">
+          <div className="step-tag">🎤 따라 말하기</div>
+          {isLetter
+            ? <div className="spk-letters">{[0,1,2].map(i=><span key={i} className="spk-l" style={{color:s.color}}>{ch}</span>)}</div>
+            : <div style={{fontSize:90,lineHeight:1,marginBottom:10}}>{s.emoji}</div>
+          }
+          <div className="spk-word">{s.word}</div>
+          <div className="spk-hint">👩 엄마와 함께 따라 말해요</div>
+          <button className={`sound-pill ${soundActive?"playing":""}`} onClick={tapSound} style={{marginBottom:28}}>
+            <span className="si">{isSpeaking?"🔉":"🔊"}</span>
+            <span style={{color:soundActive?s.color:"#3D2C1E"}}>{isSpeaking?"재생 중...":"발음 듣기"}</span>
+          </button>
+          <div className="mic-zone">
+            <button className={`mic-btn ${micState}`} onClick={tapMic}>
+              {micState==="done"?"✓":"🎤"}
+            </button>
+            <span className={`mic-lbl ${micState==="done"?"ok":""}`}>
+              {micState==="idle"&&"탭해서 말해봐요!"}
+              {micState==="rec" &&(sttOK?"듣고 있어요...":"잠깐만요...")}
+              {micState==="done"&&"잘했어요! 🎉"}
+            </span>
+          </div>
+          <button className="next-pill" disabled={!canNext()} onClick={nextStep}>다음 →</button>
+        </div>
+      </div>
+    );
+  };
+
+  /* ── GAME ── */
+  const GameScreen = ({s}) => (
+    <div className="scr">
+      <LessonHeader s={s}/>
+      <div className="game-scr fu">
+        <div className="step-tag">🎮 미니 게임</div>
+        <div className="game-emo">{s.quizEmoji}</div>
+        <div className="game-q">어떤 단어일까요?</div>
+        <div className="game-grid">
+          {s.choices.map((w,i)=>(
+            <button key={i}
+              className={`game-choice ${quizAnswer===w&&w===s.answer?"gc":shakeWord===w?"gw":""}`}
+              onClick={()=>tapQuiz(w)}
+            >{w}</button>
+          ))}
+        </div>
+        <button className="next-pill" disabled={quizAnswer!==s.answer} onClick={nextStep}>다음 →</button>
+      </div>
+    </div>
+  );
+
+  /* ── REWARD ── */
+  const Reward = () => (
+    <div className="scr">
+      <LessonHeader s={{label:"완료!"}}/>
+      <div className="rwd-scr fu">
+        <div className="rwd-conf">🎊 🎉 🎊 🎉 🎊</div>
+        <div className="rwd-sticker">{STICKERS[stickers.length%STICKERS.length]}</div>
+        <div className="rwd-title">대단해요! 🥳</div>
+        <div className="rwd-sub">{wk.weekKey.replace("week","Week ")} 완료 · 스티커 획득!</div>
+        <div className="rwd-chips">
+          {wk.items.map((item,i)=>(
+            <span key={i} className="rwd-chip">{EMOJI[item]||""} {item}</span>
+          ))}
+        </div>
+        <button className="rwd-btn" onClick={finishLesson}>🏠 홈으로 돌아가기</button>
+      </div>
+    </div>
+  );
+
+  /* ── ROADMAP ── */
+  const Roadmap = () => (
+    <div className="scr fu">
+      <div className="hdr">
+        <div>
+          <div className="hdr-greeting">커리큘럼 🗺️</div>
+          <div className="hdr-title">3개월<br/>학습 로드맵</div>
+        </div>
+        <div className="hdr-avatar" style={{background:"linear-gradient(135deg,#74B9FF,#A78BFA)"}}>🗺️</div>
+      </div>
+      <div className="rm-scr">
+        {Object.entries(CURRICULUM).map(([mKey,month],mi)=>{
+          const mWeeks  = WEEKS.filter(w=>w.monthKey===mKey);
+          const allDone = mWeeks.every(w=>completedWeeks.includes(WEEKS.indexOf(w)));
+          const isCurM  = mKey===wk.monthKey;
+          return (
+            <div key={mKey} className="month-block">
+              <div className="mb-top">
+                <div className="mb-icon" style={{background:month.color+"22"}}>{month.icon}</div>
+                <div>
+                  <div className="mb-name">Month {mi+1}</div>
+                  <div className="mb-title">{month.label}</div>
+                </div>
+                <span className={`mb-tag ${allDone?"t-done":isCurM?"t-cur":"t-next"}`}>
+                  {allDone?"완료 ✓":isCurM?"진행중":"예정"}
+                </span>
+              </div>
+              <div className="mb-weeks">
+                {Object.entries(month.weeks).map(([wKey,items])=>{
+                  const gi  =WEEKS.findIndex(w=>w.weekKey===wKey);
+                  const done=completedWeeks.includes(gi), cur=gi===CUR_WEEK;
+                  return (
+                    <div key={wKey} className={`wk-row ${cur?"wk-cur":""}`}>
+                      <div className="wdot" style={{background:done?"#5BC4BF":cur?month.color:"#E0D9CF"}}/>
+                      <div>
+                        <div className="wk-num">{wKey.replace("week","Week ")}</div>
+                        <div className="wk-words">{items.join(" · ")}</div>
+                      </div>
+                      {done&&<span style={{marginLeft:"auto",fontSize:18}}>✅</span>}
+                      {cur &&<span className="wk-badge">진행중</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  /* ── PROGRESS ── */
+  const Progress = () => (
+    <div className="scr fu">
+      <div className="hdr">
+        <div>
+          <div className="hdr-greeting">성장기록 ⭐</div>
+          <div className="hdr-title">정말 잘<br/>하고 있어요!</div>
+        </div>
+        <div className="hdr-avatar" style={{background:"linear-gradient(135deg,#FFD93D,#FFB347)"}}>🏆</div>
+      </div>
+      <div className="pg-scr">
+        <div className="stats-row">
+          <div className="stat-box"><div className="stat-n">{stickers.length}</div><div className="stat-l">스티커</div></div>
+          <div className="stat-box"><div className="stat-n">{completedWeeks.length}</div><div className="stat-l">완료 주차</div></div>
+          <div className="stat-box"><div className="stat-n">{learnedItems.length}</div><div className="stat-l">배운 항목</div></div>
+        </div>
+        <div className="sec-head">🌟 스티커 앨범</div>
+        <div className="album">
+          <div className="album-sub">{stickers.length} / 20 획득</div>
+          <div className="stk-grid">
+            {Array.from({length:20},(_,i)=>(
+              <div key={i} className={`stk-slot ${stickers.includes(i)?"stk-on":"stk-off"}`}>
+                {stickers.includes(i)?STICKERS[i%STICKERS.length]:""}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="sec-head">📚 배운 내용</div>
+        <div className="learned-box">
+          <div className="learned-chips">
+            {learnedItems.map((item,i)=>(
+              <span key={i} className="lchip">{EMOJI[item]||""} {item}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ── LESSON ROUTER ── */
+  const renderLesson = () => {
+    const s = FLOW[stepIdx];
+    if (!s) return null;
+    if (s.kind==="reward") return <Reward/>;
+    if (s.kind==="game")   return <GameScreen s={s}/>;
+    if (s.kind==="speak")  return <SpeakScreen s={s}/>;
+    return <CardScreen s={s}/>;
+  };
+
+  const NAV_ITEMS=[{id:"home",icon:"🏠",label:"홈"},{id:"roadmap",icon:"🗺️",label:"로드맵"},{id:"progress",icon:"⭐",label:"성장기록"}];
+
+  return (
+    <>
+      <style>{css}</style>
+      <div className="shell">
+        <div className="blob b1"/><div className="blob b2"/><div className="blob b3"/>
+
+        {screen==="home"     && <Home/>}
+        {screen==="lesson"   && renderLesson()}
+        {screen==="roadmap"  && <Roadmap/>}
+        {screen==="progress" && <Progress/>}
+
+        {screen!=="lesson" && (
+          <div className="nav">
+            {NAV_ITEMS.map(n=>(
+              <button key={n.id} className={`nbtn ${screen===n.id?"on":""}`} onClick={()=>setScreen(n.id)}>
+                <span className="nicon">{n.icon}</span>
+                <span className="nlabel">{n.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>
